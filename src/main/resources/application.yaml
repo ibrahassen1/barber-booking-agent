@@ -1,3 +1,13 @@
 spring:
   application:
     name: barber-booking-agent
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/booking_agent
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
