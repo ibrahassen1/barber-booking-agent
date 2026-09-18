@@ -16,6 +16,25 @@ public class BookingService {
     }
 
     public Booking createBooking(Booking booking) {
+
+        if (booking.getStartTime() == null || booking.getEndTime() == null) {
+            throw new IllegalArgumentException("Start time and end time are required");
+        }
+
+        if (!booking.getEndTime().isAfter(booking.getStartTime())) {
+            throw new IllegalArgumentException("End time must be after start time");
+        }
+
+        List<Booking> conflicts =
+                bookingRepository.findByStartTimeLessThanAndEndTimeGreaterThan(
+                        booking.getEndTime(),
+                        booking.getStartTime()
+                );
+
+        if (!conflicts.isEmpty()) {
+            throw new IllegalStateException("That time slot is already booked");
+        }
+
         booking.setStatus("CONFIRMED");
         booking.setCreatedAt(LocalDateTime.now());
 
