@@ -11,3 +11,8 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: true
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID}
+    client-secret: ${GOOGLE_CLIENT_SECRET}
+    redirect-uri: http://localhost:8080/oauth2/callback/google
