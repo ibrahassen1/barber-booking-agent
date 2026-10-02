@@ -8,10 +8,13 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
+import java.time.Instant;
+
 @Service
 public class GoogleTokenService {
 
     private final RestClient restClient = RestClient.create();
+    private final GoogleCredentialRepository credentialRepository;
 
     @Value("${google.oauth.client-id}")
     private String clientId;
@@ -23,11 +26,17 @@ public class GoogleTokenService {
     private String redirectUri;
 
     private String accessToken;
-    private String refreshToken;
+    private Instant accessTokenExpiresAt;
+
+    public GoogleTokenService(
+            GoogleCredentialRepository credentialRepository) {
+        this.credentialRepository = credentialRepository;
+    }
 
     public void exchangeCode(String code) {
 
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+
         body.add("code", code);
         body.add("client_id", clientId);
         body.add("client_secret", clientSecret);
@@ -42,32 +51,113 @@ public class GoogleTokenService {
                 .body(TokenResponse.class);
 
         if (response == null || response.accessToken() == null) {
-            throw new IllegalStateException("Google did not return an access token");
+            throw new IllegalStateException(
+                    "Google did not return an access token"
+            );
         }
 
         this.accessToken = response.accessToken();
 
+        long expiresIn = response.expiresIn() != null
+                ? response.expiresIn()
+                : 3600;
+
+        this.accessTokenExpiresAt =
+                Instant.now().plusSeconds(expiresIn);
+
         if (response.refreshToken() != null) {
-            this.refreshToken = response.refreshToken();
+            credentialRepository.save(
+                    new GoogleCredential(
+                            1L,
+                            response.refreshToken()
+                    )
+            );
+
+            System.out.println(
+                    "Google refresh token saved to database"
+            );
         }
     }
 
-    public String getAccessToken() {
-        if (accessToken == null) {
-            throw new IllegalStateException("Google Calendar has not been authorized");
+    public synchronized String getAccessToken() {
+
+        if (accessToken != null
+                && accessTokenExpiresAt != null
+                && Instant.now().isBefore(
+                        accessTokenExpiresAt.minusSeconds(60)
+                )) {
+
+            return accessToken;
         }
+
+        refreshAccessToken();
+
         return accessToken;
     }
 
-    public String getRefreshToken() {
-        return refreshToken;
+    private void refreshAccessToken() {
+
+        GoogleCredential credential =
+                credentialRepository.findById(1L)
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Google Calendar has not been authorized yet"
+                                )
+                        );
+
+        MultiValueMap<String, String> body =
+                new LinkedMultiValueMap<>();
+
+        body.add(
+                "refresh_token",
+                credential.getRefreshToken()
+        );
+
+        body.add("client_id", clientId);
+        body.add("client_secret", clientSecret);
+        body.add("grant_type", "refresh_token");
+
+        TokenResponse response = restClient.post()
+                .uri("https://oauth2.googleapis.com/token")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(body)
+                .retrieve()
+                .body(TokenResponse.class);
+
+        if (response == null || response.accessToken() == null) {
+            throw new IllegalStateException(
+                    "Could not refresh Google access token"
+            );
+        }
+
+        this.accessToken = response.accessToken();
+
+        long expiresIn = response.expiresIn() != null
+                ? response.expiresIn()
+                : 3600;
+
+        this.accessTokenExpiresAt =
+                Instant.now().plusSeconds(expiresIn);
+
+        System.out.println(
+                "Google access token refreshed automatically"
+        );
     }
 
     public record TokenResponse(
-            @JsonProperty("access_token") String accessToken,
-            @JsonProperty("refresh_token") String refreshToken,
-            @JsonProperty("expires_in") Long expiresIn,
-            @JsonProperty("token_type") String tokenType,
-            @JsonProperty("scope") String scope
+            @JsonProperty("access_token")
+            String accessToken,
+
+            @JsonProperty("refresh_token")
+            String refreshToken,
+
+            @JsonProperty("expires_in")
+            Long expiresIn,
+
+            @JsonProperty("token_type")
+            String tokenType,
+
+            @JsonProperty("scope")
+            String scope
     ) {}
 }

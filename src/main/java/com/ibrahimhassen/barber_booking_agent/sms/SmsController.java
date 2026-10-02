@@ -19,15 +19,18 @@ public class SmsController {
     private final BookingAiService aiService;
     private final GoogleCalendarService calendarService;
     private final BookingService bookingService;
+    private final TwilioSmsService smsService;
 
     public SmsController(
             BookingAiService aiService,
             GoogleCalendarService calendarService,
-            BookingService bookingService) {
+            BookingService bookingService,
+            TwilioSmsService smsService) {
 
         this.aiService = aiService;
         this.calendarService = calendarService;
         this.bookingService = bookingService;
+        this.smsService = smsService;
     }
 
     @PostMapping(
@@ -44,21 +47,22 @@ public class SmsController {
             BookingIntent intent = aiService.understand(body);
 
             if (!"BOOK".equals(intent.intent())) {
-                return twiml(
+                smsService.sendSms(
+                        from,
                         "I couldn't understand that booking request. Try something like: haircut tomorrow at 3 PM."
                 );
+
+                return emptyTwiml();
             }
 
             OffsetDateTime start = OffsetDateTime.parse(intent.startTime());
             OffsetDateTime end = start.plusHours(1);
 
-            String startRfc3339 = start.format(
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
-            );
+            DateTimeFormatter rfc3339 =
+                    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
 
-            String endRfc3339 = end.format(
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
-            );
+            String startRfc3339 = start.format(rfc3339);
+            String endRfc3339 = end.format(rfc3339);
 
             boolean available = calendarService.isAvailable(
                     startRfc3339,
@@ -66,9 +70,12 @@ public class SmsController {
             );
 
             if (!available) {
-                return twiml(
+                smsService.sendSms(
+                        from,
                         "That time is already booked. Send me another time and I'll check it."
                 );
+
+                return emptyTwiml();
             }
 
             Booking booking = new Booking();
@@ -91,26 +98,34 @@ public class SmsController {
                     DateTimeFormatter.ofPattern("EEE MMM d 'at' h:mm a")
             );
 
-            return twiml(
+            smsService.sendSms(
+                    from,
                     "You're booked for " + intent.service()
                             + " on " + formattedTime + "."
             );
 
+            return emptyTwiml();
+
         } catch (Exception e) {
             e.printStackTrace();
 
-            return twiml(
-                    "Something went wrong while booking. Try again in a moment."
-            );
+            try {
+                smsService.sendSms(
+                        from,
+                        "Something went wrong while booking. Try again in a moment."
+                );
+            } catch (Exception smsException) {
+                smsException.printStackTrace();
+            }
+
+            return emptyTwiml();
         }
     }
 
-    private String twiml(String message) {
+    private String emptyTwiml() {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
-                <Response>
-                    <Message>%s</Message>
-                </Response>
-                """.formatted(message);
+                <Response></Response>
+                """;
     }
 }
